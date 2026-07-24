@@ -1,0 +1,13 @@
+pandas
+numpy
+matplotlib
+seaborn
+scipy
+statsmodels
+nba_api
+pymc
+arviz
+jupyter
+ipykernel
+nbformat
+nbclient
