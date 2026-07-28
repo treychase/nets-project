@@ -21,8 +21,8 @@ DEFAULT_HTML = "bayesian_ar_output/dashboard.html"
 
 
 def build_dashboard_html(df: pd.DataFrame) -> str:
-    """df needs PLAYER_NAME, PROJECTED_AGE, PROJECTED_TS_PCT, HDI_LOW, HDI_HIGH,
-    already sorted descending by PROJECTED_TS_PCT."""
+    """df needs PLAYER_NAME, TEAM, PROJECTED_AGE, PROJECTED_TS_PCT, HDI_LOW,
+    HDI_HIGH, already sorted descending by PROJECTED_TS_PCT."""
     dom_min = max(0.0, df["HDI_LOW"].min() - 0.02)
     dom_max = min(1.0, df["HDI_HIGH"].max() + 0.02)
     dom_span = dom_max - dom_min
@@ -36,10 +36,12 @@ def build_dashboard_html(df: pd.DataFrame) -> str:
         range_left = (row["HDI_LOW"] - dom_min) / dom_span * 100
         range_width = (row["HDI_HIGH"] - row["HDI_LOW"]) / dom_span * 100
         name = html_lib.escape(str(row["PLAYER_NAME"]))
+        team = html_lib.escape(str(row["TEAM"]))
         rows_html.append(f"""
         <tr>
           <td class="rank">{rank}</td>
           <td class="name">{name}</td>
+          <td class="team">{team}</td>
           <td class="age">{row['PROJECTED_AGE']:.0f}</td>
           <td class="bar-cell">
             <div class="bar-track">
@@ -130,6 +132,7 @@ def build_dashboard_html(df: pd.DataFrame) -> str:
   td {{ padding: 8px 10px; vertical-align: middle; }}
   td.rank {{ color: var(--ink-muted); width: 32px; }}
   td.name {{ font-weight: 500; white-space: nowrap; }}
+  td.team {{ color: var(--ink-secondary); width: 56px; }}
   td.age {{ color: var(--ink-secondary); width: 48px; }}
   td.value {{ width: 130px; white-space: nowrap; font-variant-numeric: tabular-nums; }}
   td.value .hdi {{ color: var(--ink-muted); font-size: 0.75rem; margin-left: 6px; }}
@@ -171,13 +174,14 @@ def build_dashboard_html(df: pd.DataFrame) -> str:
     projection.
   </div>
   <div class="controls">
-    <input id="search" type="text" placeholder="Filter by player name&hellip;">
+    <input id="search" type="text" placeholder="Filter by player or team&hellip;">
   </div>
   <table id="proj-table">
     <thead>
       <tr>
         <th data-key="rank" data-type="num">#</th>
         <th data-key="name" data-type="str">Player</th>
+        <th data-key="team" data-type="str">Team</th>
         <th data-key="age" data-type="num">Age</th>
         <th class="unsortable">Range</th>
         <th data-key="value" data-type="num">Projected TS%</th>
@@ -199,7 +203,8 @@ def build_dashboard_html(df: pd.DataFrame) -> str:
     const q = search.value.trim().toLowerCase();
     let visible = 0;
     rows.forEach(r => {{
-      const match = r.querySelector('.name').textContent.toLowerCase().includes(q);
+      const haystack = (r.querySelector('.name').textContent + ' ' + r.querySelector('.team').textContent).toLowerCase();
+      const match = haystack.includes(q);
       r.style.display = match ? '' : 'none';
       if (match) visible++;
     }});
