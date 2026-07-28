@@ -99,6 +99,7 @@ def fit_ar_stat_model(
     target_accept: float = 0.9,
     seed: int = 42,
     progressbar: bool = False,
+    compute_loglik: bool = True,
 ) -> ARStatFit:
     """Fit the pooled flexible-AR(3) model for one target stat. Priors are
     scaled to the target's own standard deviation rather than a fixed
@@ -148,6 +149,11 @@ def fit_ar_stat_model(
             draws, tune=tune, chains=chains, target_accept=target_accept,
             random_seed=seed, progressbar=progressbar,
         )
+        if compute_loglik:
+            # Needed for az.loo (PSIS-LOO-CV) -- cheap relative to sampling itself,
+            # since it only evaluates the observed-data log density at already-drawn
+            # posterior samples rather than doing any new MCMC.
+            pm.compute_log_likelihood(idata, progressbar=progressbar)
 
     return ARStatFit(
         target_col=target_col,
