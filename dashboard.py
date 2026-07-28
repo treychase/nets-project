@@ -18,14 +18,29 @@ import pandas as pd
 
 DEFAULT_CSV = "bayesian_ar_output/next_season_projections.csv"
 DEFAULT_HTML = "bayesian_ar_output/dashboard.html"
+DEFAULT_BOX_SCORE_CSV = "nba_data.csv"
+
+
+def latest_fga_per_game(box_score_csv: str = DEFAULT_BOX_SCORE_CSV) -> pd.DataFrame:
+    """Each player's FGA (already a per-game average) from their most recent season."""
+    box = pd.read_csv(box_score_csv)
+    latest = box.sort_values("SEASON").groupby("PLAYER_ID", as_index=False).last()
+    return latest[["PLAYER_ID", "FGA"]].rename(columns={"FGA": "FGA_PER_GAME"})
 
 
 def build_dashboard_html(df: pd.DataFrame) -> str:
     """df needs PLAYER_NAME, TEAM, PROJECTED_AGE, PROJECTED_TS_PCT, HDI_LOW,
-    HDI_HIGH, already sorted descending by PROJECTED_TS_PCT."""
+    HDI_HIGH, FGA_PER_GAME, already sorted descending by PROJECTED_TS_PCT."""
     dom_min = max(0.0, df["HDI_LOW"].min() - 0.02)
     dom_max = min(1.0, df["HDI_HIGH"].max() + 0.02)
     dom_span = dom_max - dom_min
+
+    teams = sorted(df["TEAM"].dropna().unique())
+    team_options = "".join(
+        f'<option value="{html_lib.escape(str(t))}">{html_lib.escape(str(t))}</option>' for t in teams
+    )
+    fga_min = float(df["FGA_PER_GAME"].min())
+    fga_max = float(df["FGA_PER_GAME"].max())
 
     rows_html = []
     for rank, (_, row) in enumerate(df.iterrows(), start=1):
@@ -37,12 +52,14 @@ def build_dashboard_html(df: pd.DataFrame) -> str:
         range_width = (row["HDI_HIGH"] - row["HDI_LOW"]) / dom_span * 100
         name = html_lib.escape(str(row["PLAYER_NAME"]))
         team = html_lib.escape(str(row["TEAM"]))
+        fga = row["FGA_PER_GAME"]
         rows_html.append(f"""
-        <tr>
+        <tr data-team="{team}" data-fga="{fga:.2f}">
           <td class="rank">{rank}</td>
           <td class="name">{name}</td>
           <td class="team">{team}</td>
           <td class="age">{row['PROJECTED_AGE']:.0f}</td>
+          <td class="fga">{fga:.1f}</td>
           <td class="bar-cell">
             <div class="bar-track">
               <div class="bar-range" style="left:{range_left:.2f}%;width:{range_width:.2f}%;"></div>
@@ -103,9 +120,15 @@ def build_dashboard_html(df: pd.DataFrame) -> str:
     margin-bottom: 20px;
     line-height: 1.5;
   }}
-  .controls {{ margin-bottom: 12px; }}
+  .controls {{
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+  }}
   #search {{
-    width: 100%;
+    flex: 1 1 220px;
     padding: 8px 12px;
     border-radius: 8px;
     border: 1px solid var(--border);
@@ -113,6 +136,24 @@ def build_dashboard_html(df: pd.DataFrame) -> str:
     color: var(--ink);
     font-size: 0.9rem;
   }}
+  #team-filter {{
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--ink);
+    font-size: 0.9rem;
+  }}
+  .fga-filter {{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--ink-secondary);
+    font-size: 0.82rem;
+    white-space: nowrap;
+  }}
+  .fga-filter input[type="range"] {{ accent-color: var(--accent); }}
+  #fga-value {{ color: var(--ink); font-variant-numeric: tabular-nums; min-width: 3.2em; }}
   table {{ width: 100%; border-collapse: collapse; font-size: 0.85rem; }}
   thead th {{
     text-align: left;
@@ -134,6 +175,7 @@ def build_dashboard_html(df: pd.DataFrame) -> str:
   td.name {{ font-weight: 500; white-space: nowrap; }}
   td.team {{ color: var(--ink-secondary); width: 56px; }}
   td.age {{ color: var(--ink-secondary); width: 48px; }}
+  td.fga {{ color: var(--ink-secondary); width: 56px; font-variant-numeric: tabular-nums; }}
   td.value {{ width: 130px; white-space: nowrap; font-variant-numeric: tabular-nums; }}
   td.value .hdi {{ color: var(--ink-muted); font-size: 0.75rem; margin-left: 6px; }}
   td.bar-cell {{ width: 220px; }}
@@ -175,6 +217,15 @@ def build_dashboard_html(df: pd.DataFrame) -> str:
   </div>
   <div class="controls">
     <input id="search" type="text" placeholder="Filter by player or team&hellip;">
+    <select id="team-filter">
+      <option value="">All teams</option>
+      {team_options}
+    </select>
+    <div class="fga-filter">
+      <label for="fga-min">FGA/game &ge;</label>
+      <input id="fga-min" type="range" min="{fga_min:.1f}" max="{fga_max:.1f}" step="0.1" value="{fga_min:.1f}">
+      <span id="fga-value">{fga_min:.1f}</span>
+    </div>
   </div>
   <table id="proj-table">
     <thead>
@@ -183,6 +234,7 @@ def build_dashboard_html(df: pd.DataFrame) -> str:
         <th data-key="name" data-type="str">Player</th>
         <th data-key="team" data-type="str">Team</th>
         <th data-key="age" data-type="num">Age</th>
+        <th data-key="fga" data-type="num">FGA/G</th>
         <th class="unsortable">Range</th>
         <th data-key="value" data-type="num">Projected TS%</th>
       </tr>
@@ -195,20 +247,35 @@ def build_dashboard_html(df: pd.DataFrame) -> str:
 </div>
 <script>
   const search = document.getElementById('search');
+  const teamFilter = document.getElementById('team-filter');
+  const fgaMin = document.getElementById('fga-min');
+  const fgaValue = document.getElementById('fga-value');
   const tbody = document.querySelector('#proj-table tbody');
   const rows = Array.from(tbody.querySelectorAll('tr'));
   const empty = document.getElementById('empty');
 
-  search.addEventListener('input', () => {{
+  function applyFilters() {{
     const q = search.value.trim().toLowerCase();
+    const team = teamFilter.value;
+    const minFga = parseFloat(fgaMin.value);
     let visible = 0;
     rows.forEach(r => {{
       const haystack = (r.querySelector('.name').textContent + ' ' + r.querySelector('.team').textContent).toLowerCase();
-      const match = haystack.includes(q);
+      const matchesSearch = haystack.includes(q);
+      const matchesTeam = !team || r.dataset.team === team;
+      const matchesFga = parseFloat(r.dataset.fga) >= minFga;
+      const match = matchesSearch && matchesTeam && matchesFga;
       r.style.display = match ? '' : 'none';
       if (match) visible++;
     }});
     empty.style.display = visible === 0 ? 'block' : 'none';
+  }}
+
+  search.addEventListener('input', applyFilters);
+  teamFilter.addEventListener('change', applyFilters);
+  fgaMin.addEventListener('input', () => {{
+    fgaValue.textContent = parseFloat(fgaMin.value).toFixed(1);
+    applyFilters();
   }});
 
   let sortState = {{key: 'value', dir: -1}};
@@ -237,13 +304,20 @@ def build_dashboard_html(df: pd.DataFrame) -> str:
 """
 
 
-def build_dashboard(csv_path: str = DEFAULT_CSV, html_path: str = DEFAULT_HTML) -> Path:
-    """Read the projections CSV, render the dashboard, and write it to disk."""
+def build_dashboard(
+    csv_path: str = DEFAULT_CSV,
+    html_path: str = DEFAULT_HTML,
+    box_score_csv: str = DEFAULT_BOX_SCORE_CSV,
+) -> Path:
+    """Read the projections CSV, merge in each player's latest FGA/game, render
+    the dashboard, and write it to disk."""
     df = (
         pd.read_csv(csv_path)
+        .merge(latest_fga_per_game(box_score_csv), on="PLAYER_ID", how="left")
         .sort_values("PROJECTED_TS_PCT", ascending=False)
         .reset_index(drop=True)
     )
+    df["FGA_PER_GAME"] = df["FGA_PER_GAME"].fillna(0.0)
     out_path = Path(html_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(build_dashboard_html(df))
@@ -254,10 +328,13 @@ def main():
     parser = argparse.ArgumentParser(description="Build (and open) the next-season TS% dashboard.")
     parser.add_argument("--csv", default=DEFAULT_CSV, help="Projections CSV (default: %(default)s)")
     parser.add_argument("--output", default=DEFAULT_HTML, help="Output HTML path (default: %(default)s)")
+    parser.add_argument(
+        "--box-scores", default=DEFAULT_BOX_SCORE_CSV, help="Box-score CSV for FGA/game (default: %(default)s)"
+    )
     parser.add_argument("--no-open", action="store_true", help="Don't launch a browser after building")
     args = parser.parse_args()
 
-    out_path = build_dashboard(args.csv, args.output)
+    out_path = build_dashboard(args.csv, args.output, args.box_scores)
     print(f"Dashboard written to {out_path}")
 
     if not args.no_open:
