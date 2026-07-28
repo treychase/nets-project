@@ -133,9 +133,22 @@ For each player active in the most recent scraped season (`SEASON_START_YEAR == 
 
 Real-data result: **475 of 780 active players** (61%) get a projection; the rest lack even a single prior TS% observation in-window at their most recent-season row (this floor is inherent — an AR model needs at least one observed lag to condition on; a true zero-history rookie can't be projected this way regardless of flexible lags, since `prev1` requires the row itself to already have a TS% on record).
 
-## 6. Dashboard
+## 6. Extending to assists, rebounds, and defensive efficiency
 
-`bayesian_ar_output/next_season_projections.csv` (PLAYER_ID, PLAYER_NAME, TEAM, PROJECTED_AGE, PROJECTED_TS_PCT, HDI_LOW, HDI_HIGH) is the interchange format between the notebook and the dashboard. `dashboard.py` is a standalone module — it only depends on `pandas`, not `pymc`/`arviz` — so viewing or rebuilding the dashboard doesn't require re-running the model:
+Sections 2–3 above (flexible lags, pooled Gaussian AR(3)) are specific to TS% only insofar as `project.ipynb` hardcodes them for it. `stat_models.py` factors that architecture out into two reusable pieces:
+
+- `build_ar_frame(model_source, target_cols, covariate_cols=("USG_PCT",), min_minutes=500)` — builds the flexible-lag AR(3) feature frame (Section 2) for one or more target columns at once, filtered on `SEASON_MIN_EST = MIN * GP >= 500` rather than the TS% model's attempts floor. A shot-attempts floor doesn't make sense for rebounding or defense (a rim-running big can rebound plenty without shooting much), so this uses a playing-time floor instead, applied uniformly so every stat is fit on the *same* player-season universe.
+- `fit_ar_stat_model(ar_df, target_col, ...)` / `project_ar_stat(...)` / `project_next_season(...)` — the pooled model (Section 3) and its projection step, generalized to any target column. Priors scale off the target's own standard deviation (`alpha ~ Normal(y_mean, 3*y_sd)`, `sigma ~ HalfNormal(y_sd)`) instead of the TS%-specific fixed constants (`0.2`), since `DEF_RATING` lives on a ~100–120 scale while the percentage stats live on ~0–1.
+
+`build_projections.py` fits this pooled model for four target columns — `TS_PCT`, `AST_PCT` (assist rate), `REB_PCT` (rebound rate), and `DEF_RATING` (points allowed per 100 possessions, where *lower* is better) — on the shared player-season universe, projects next season for every active player on each, and writes one combined CSV. Note this refits TS% with the simpler pooled model rather than reusing the hierarchical fit from Section 4; the hierarchical extension remains the deeper, TS%-specific analysis, while this pipeline optimizes for a consistent model across four stats over squeezing out the last bit of TS%-specific accuracy.
+
+For each stat, `DELTA_<stat> = PROJECTED − CURRENT` (sign-flipped for `DEF_RATING`, so positive always means "expected to get better"), then z-scored across all projected players. `BREAKOUT_SCORE` is the mean of the four z-scores — a composite "expected to improve the most, across the board" ranking, comparable across stats despite their different units and variances.
+
+On the real 2021–26 data (`SEASON_MIN_EST >= 500`): 1,856 player-seasons, 639 players, 379 of whom are active in the most recent season and get a next-season projection on all four stats. Each pooled model samples in ~10–12 seconds (`draws=1000, tune=1000, chains=4, target_accept=0.9`) — the full four-stat pipeline runs in under two minutes.
+
+## 7. Dashboard
+
+`bayesian_ar_output/next_season_projections_all.csv` (`PLAYER_ID`, `PLAYER_NAME`, `TEAM`, `PROJECTED_AGE`, then `CURRENT_<stat>`/`PROJECTED_<stat>`/`<stat>_HDI_LOW`/`<stat>_HDI_HIGH`/`DELTA_<stat>`/`Z_<stat>` for each of the four stats, plus `BREAKOUT_SCORE`) is the interchange format between `build_projections.py` and the dashboard. `dashboard.py` is a standalone module — it only depends on `pandas`, not `pymc`/`arviz` — so viewing or rebuilding the dashboard doesn't require re-running any model:
 
 ```
 python dashboard.py              # rebuild bayesian_ar_output/dashboard.html from the CSV and open it
@@ -143,14 +156,15 @@ python dashboard.py --no-open     # rebuild only
 python dashboard.py --csv path/to/other.csv --output path/to/other.html
 ```
 
-The HTML is a single self-contained file (inline CSS/JS, no external requests), sorted by projected TS% descending by default. Every column header is clickable to re-sort, including Team — the sort is stable, so sorting by team groups players together while preserving their relative TS%-descending order within each team. The search box filters by player name or team substring.
+The HTML is a single self-contained file (inline CSS/JS, no external requests), sorted by `BREAKOUT_SCORE` descending by default — who's projected to improve the most across shooting, playmaking, rebounding, and defense together. Every column header is clickable to re-sort by a specific stat instead (sorting is stable, so re-sorting by Team groups players together while preserving their relative order within each team). The search box filters by player name or team substring; the FGA/game slider is there to separate a real small-sample-size breakout candidate from one that's mostly regression-to-the-mean noise on very little playing time.
 
-## 7. Reproducing this
+## 8. Reproducing this
 
 ```
 pip install -r requirements.txt   # or use .devcontainer
 jupyter nbconvert --to notebook --execute --inplace project.ipynb
+python build_projections.py       # if you only need to refresh the 4-stat CSV, not the full notebook
 python dashboard.py
 ```
 
-Sampling both models takes roughly 20 seconds (pooled) + 3 minutes (hierarchical) on a single machine with 4 chains; the projection loop over ~780 players adds another few seconds since it only evaluates already-drawn posterior samples, not new MCMC.
+Sampling the TS% models takes roughly 20 seconds (pooled) + 3 minutes (hierarchical) on a single machine with 4 chains; each of the four `build_projections.py` models adds another ~10–12 seconds, and the projection loops only evaluate already-drawn posterior samples, not new MCMC, so they add negligible time.

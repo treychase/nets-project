@@ -1,8 +1,10 @@
 """
-Next-season TS% projection dashboard.
+Next-season breakout dashboard.
 
-Renders the Bayesian AR model's next-season projections (produced by
-project.ipynb) as a self-contained, sortable/searchable HTML page.
+Renders the combined Bayesian AR model projections (TS%, assist rate,
+rebound rate, defensive rating -- produced by build_projections.py /
+project.ipynb) as a self-contained, sortable/searchable HTML page, ranked by
+each player's composite expected year-over-year improvement.
 
 Usage:
     python dashboard.py              # rebuild bayesian_ar_output/dashboard.html and open it
@@ -16,9 +18,17 @@ from pathlib import Path
 
 import pandas as pd
 
-DEFAULT_CSV = "bayesian_ar_output/next_season_projections.csv"
+DEFAULT_CSV = "bayesian_ar_output/next_season_projections_all.csv"
 DEFAULT_HTML = "bayesian_ar_output/dashboard.html"
 DEFAULT_BOX_SCORE_CSV = "nba_data.csv"
+
+# target column -> (label, unit suffix, decimals, higher values are better?)
+STAT_COLUMNS = [
+    ("TS_PCT", "TS%", "%", 1, True),
+    ("AST_PCT", "AST%", "%", 1, True),
+    ("REB_PCT", "REB%", "%", 1, True),
+    ("DEF_RATING", "DEF RTG", "", 1, False),
+]
 
 
 def latest_fga_per_game(box_score_csv: str = DEFAULT_BOX_SCORE_CSV) -> pd.DataFrame:
@@ -28,12 +38,37 @@ def latest_fga_per_game(box_score_csv: str = DEFAULT_BOX_SCORE_CSV) -> pd.DataFr
     return latest[["PLAYER_ID", "FGA"]].rename(columns={"FGA": "FGA_PER_GAME"})
 
 
+def _fmt_stat_value(value: float, unit: str, decimals: int) -> str:
+    if unit == "%":
+        return f"{value * 100:.{decimals}f}%"
+    return f"{value:.{decimals}f}"
+
+
+def _stat_cell_html(row: pd.Series, target_col: str, unit: str, decimals: int) -> str:
+    current = row[f"CURRENT_{target_col}"]
+    projected = row[f"PROJECTED_{target_col}"]
+    delta = row[f"DELTA_{target_col}"]
+    is_improvement = delta > 0  # DELTA_* is already direction-adjusted (positive = better)
+    delta_class = "pos" if is_improvement else ("neg" if delta < 0 else "flat")
+    raw_delta = projected - current  # shown in the stat's own units, not the direction-adjusted one
+    sign = "+" if raw_delta >= 0 else ""
+    if unit == "%":
+        delta_str = f"{sign}{raw_delta * 100:.{decimals}f}"
+    else:
+        delta_str = f"{sign}{raw_delta:.{decimals}f}"
+    return (
+        f'<span class="stat-cur">{_fmt_stat_value(current, unit, decimals)}</span>'
+        f'<span class="stat-arrow">&rarr;</span>'
+        f'<span class="stat-proj">{_fmt_stat_value(projected, unit, decimals)}</span>'
+        f'<span class="stat-delta {delta_class}">{delta_str}</span>'
+    )
+
+
 def build_dashboard_html(df: pd.DataFrame) -> str:
-    """df needs PLAYER_NAME, TEAM, PROJECTED_AGE, PROJECTED_TS_PCT, HDI_LOW,
-    HDI_HIGH, FGA_PER_GAME, already sorted descending by PROJECTED_TS_PCT."""
-    dom_min = max(0.0, df["HDI_LOW"].min() - 0.02)
-    dom_max = min(1.0, df["HDI_HIGH"].max() + 0.02)
-    dom_span = dom_max - dom_min
+    """df needs PLAYER_NAME, TEAM, PROJECTED_AGE, FGA_PER_GAME, BREAKOUT_SCORE,
+    and CURRENT_*/PROJECTED_*/DELTA_* for every column in STAT_COLUMNS,
+    already sorted descending by BREAKOUT_SCORE."""
+    score_abs_max = max(abs(df["BREAKOUT_SCORE"].min()), abs(df["BREAKOUT_SCORE"].max()), 0.01)
 
     teams = sorted(df["TEAM"].dropna().unique())
     team_options = "".join(
@@ -42,17 +77,26 @@ def build_dashboard_html(df: pd.DataFrame) -> str:
     fga_min = float(df["FGA_PER_GAME"].min())
     fga_max = float(df["FGA_PER_GAME"].max())
 
+    stat_headers = "".join(
+        f'<th data-key="{col.lower()}" data-type="num">{label}</th>'
+        for col, label, _unit, _dec, _hib in STAT_COLUMNS
+    )
+
     rows_html = []
     for rank, (_, row) in enumerate(df.iterrows(), start=1):
-        pct = row["PROJECTED_TS_PCT"] * 100
-        low = row["HDI_LOW"] * 100
-        high = row["HDI_HIGH"] * 100
-        bar_pct = (row["PROJECTED_TS_PCT"] - dom_min) / dom_span * 100
-        range_left = (row["HDI_LOW"] - dom_min) / dom_span * 100
-        range_width = (row["HDI_HIGH"] - row["HDI_LOW"]) / dom_span * 100
+        score = row["BREAKOUT_SCORE"]
+        bar_pct = abs(score) / score_abs_max * 50  # each half of a centered track is 50%
+        bar_side = "pos" if score >= 0 else "neg"
         name = html_lib.escape(str(row["PLAYER_NAME"]))
         team = html_lib.escape(str(row["TEAM"]))
         fga = row["FGA_PER_GAME"]
+
+        stat_cells = "".join(
+            f'<td class="stat-cell" data-{col.lower()}="{row[f"DELTA_{col}"]:.6f}">'
+            f'{_stat_cell_html(row, col, unit, dec)}</td>'
+            for col, _label, unit, dec, _hib in STAT_COLUMNS
+        )
+
         rows_html.append(f"""
         <tr data-team="{team}" data-fga="{fga:.2f}">
           <td class="rank">{rank}</td>
@@ -60,20 +104,21 @@ def build_dashboard_html(df: pd.DataFrame) -> str:
           <td class="team">{team}</td>
           <td class="age">{row['PROJECTED_AGE']:.0f}</td>
           <td class="fga">{fga:.1f}</td>
+          {stat_cells}
           <td class="bar-cell">
             <div class="bar-track">
-              <div class="bar-range" style="left:{range_left:.2f}%;width:{range_width:.2f}%;"></div>
-              <div class="bar-fill" style="width:{bar_pct:.2f}%;"></div>
+              <div class="bar-mid"></div>
+              <div class="bar-fill {bar_side}" style="width:{bar_pct:.2f}%;"></div>
             </div>
           </td>
-          <td class="value">{pct:.1f}%<span class="hdi">[{low:.1f}&ndash;{high:.1f}]</span></td>
+          <td class="value">{score:+.2f}</td>
         </tr>""")
 
     return f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Next-Season TS% Projections</title>
+<title>Next-Season Breakout Dashboard</title>
 <style>
   :root {{
     --bg: #ffffff;
@@ -85,6 +130,8 @@ def build_dashboard_html(df: pd.DataFrame) -> str:
     --accent: #2f6fed;
     --accent-range: rgba(47, 111, 237, 0.22);
     --track: #e9edf2;
+    --pos: #1a9c5c;
+    --neg: #d34848;
   }}
   @media (prefers-color-scheme: dark) {{
     :root {{
@@ -97,6 +144,8 @@ def build_dashboard_html(df: pd.DataFrame) -> str:
       --accent: #6b9bff;
       --accent-range: rgba(107, 155, 255, 0.28);
       --track: #262a31;
+      --pos: #3ecb85;
+      --neg: #ef6a6a;
     }}
   }}
   * {{ box-sizing: border-box; }}
@@ -107,7 +156,7 @@ def build_dashboard_html(df: pd.DataFrame) -> str:
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     padding: 32px 20px 64px;
   }}
-  .wrap {{ max-width: 880px; margin: 0 auto; }}
+  .wrap {{ max-width: 1180px; margin: 0 auto; }}
   h1 {{ font-size: 1.4rem; margin: 0 0 4px; }}
   .subtitle {{ color: var(--ink-secondary); font-size: 0.9rem; margin: 0 0 20px; }}
   .caveat {{
@@ -154,31 +203,39 @@ def build_dashboard_html(df: pd.DataFrame) -> str:
   }}
   .fga-filter input[type="range"] {{ accent-color: var(--accent); }}
   #fga-value {{ color: var(--ink); font-variant-numeric: tabular-nums; min-width: 3.2em; }}
-  table {{ width: 100%; border-collapse: collapse; font-size: 0.85rem; }}
+  .table-scroll {{ overflow-x: auto; }}
+  table {{ width: 100%; border-collapse: collapse; font-size: 0.83rem; }}
   thead th {{
     text-align: left;
     color: var(--ink-muted);
     font-weight: 600;
-    font-size: 0.72rem;
+    font-size: 0.7rem;
     text-transform: uppercase;
     letter-spacing: 0.04em;
     padding: 8px 10px;
     border-bottom: 1px solid var(--border);
     cursor: pointer;
     user-select: none;
+    white-space: nowrap;
   }}
   thead th:hover {{ color: var(--ink-secondary); }}
   tbody tr {{ border-bottom: 1px solid var(--border); }}
   tbody tr:hover {{ background: var(--surface); }}
-  td {{ padding: 8px 10px; vertical-align: middle; }}
+  td {{ padding: 7px 10px; vertical-align: middle; white-space: nowrap; }}
   td.rank {{ color: var(--ink-muted); width: 32px; }}
-  td.name {{ font-weight: 500; white-space: nowrap; }}
-  td.team {{ color: var(--ink-secondary); width: 56px; }}
-  td.age {{ color: var(--ink-secondary); width: 48px; }}
-  td.fga {{ color: var(--ink-secondary); width: 56px; font-variant-numeric: tabular-nums; }}
-  td.value {{ width: 130px; white-space: nowrap; font-variant-numeric: tabular-nums; }}
-  td.value .hdi {{ color: var(--ink-muted); font-size: 0.75rem; margin-left: 6px; }}
-  td.bar-cell {{ width: 220px; }}
+  td.name {{ font-weight: 500; }}
+  td.team {{ color: var(--ink-secondary); width: 52px; }}
+  td.age {{ color: var(--ink-secondary); width: 44px; }}
+  td.fga {{ color: var(--ink-secondary); width: 52px; font-variant-numeric: tabular-nums; }}
+  td.stat-cell {{ font-variant-numeric: tabular-nums; font-size: 0.8rem; color: var(--ink-secondary); }}
+  .stat-arrow {{ margin: 0 3px; color: var(--ink-muted); }}
+  .stat-proj {{ color: var(--ink); font-weight: 500; }}
+  .stat-delta {{ margin-left: 6px; font-size: 0.72rem; font-weight: 600; }}
+  .stat-delta.pos {{ color: var(--pos); }}
+  .stat-delta.neg {{ color: var(--neg); }}
+  .stat-delta.flat {{ color: var(--ink-muted); }}
+  td.value {{ width: 64px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }}
+  td.bar-cell {{ width: 140px; }}
   .bar-track {{
     position: relative;
     height: 8px;
@@ -186,34 +243,43 @@ def build_dashboard_html(df: pd.DataFrame) -> str:
     background: var(--track);
     overflow: hidden;
   }}
-  .bar-range {{
+  .bar-mid {{
     position: absolute;
-    top: 0; bottom: 0;
-    background: var(--accent-range);
+    top: 0; bottom: 0; left: 50%;
+    width: 1px;
+    background: var(--border);
   }}
   .bar-fill {{
     position: absolute;
-    top: 0; bottom: 0; left: 0;
-    background: var(--accent);
+    top: 0; bottom: 0;
     border-radius: 4px;
   }}
+  .bar-fill.pos {{ left: 50%; background: var(--pos); }}
+  .bar-fill.neg {{ right: 50%; background: var(--neg); }}
   .footnote {{ margin-top: 20px; color: var(--ink-muted); font-size: 0.75rem; }}
   #empty {{ display: none; color: var(--ink-muted); padding: 24px 0; text-align: center; }}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>Next-Season TS% Projections</h1>
-  <p class="subtitle">Bayesian Gaussian AR(3) hierarchical model &mdash; sorted by projected true shooting percentage</p>
+  <h1>Next-Season Breakout Dashboard</h1>
+  <p class="subtitle">Bayesian flexible-lag AR(3) models &mdash; ranked by expected year-over-year improvement across shooting, playmaking, rebounding, and defense</p>
   <div class="caveat">
-    Projections use whichever of each player's three most recent seasons of
-    TS% are actually available (fewer for early-career players), age
-    advanced by one year, and usage rate held at its most recent observed
-    value (next season's actual usage is unknown, so this is a steady-state
-    assumption, not a usage forecast). Bars show the posterior mean on a
-    {dom_min * 100:.0f}&ndash;{dom_max * 100:.0f}% scale; the shaded band is the 94% credible
-    interval &mdash; wider bands usually mean less history behind that
-    projection.
+    Each of TS%, assist rate (AST%), rebound rate (REB%), and defensive
+    rating is projected independently from age, usage rate, and up to three
+    prior seasons of that stat (fewer for players with less history).
+    <strong>Breakout score</strong> standardizes each stat's projected
+    change (current &rarr; projected next season, flipped for defensive
+    rating since a lower number is better there) and averages the four,
+    so players are ranked by expected across-the-board improvement rather
+    than by a single stat. Players already near the top of a stat have less
+    room to climb and the model reverts them toward the population mean, so
+    established stars often show a negative score here &mdash; this ranks
+    who's expected to <em>improve</em>, not who will be best. Similarly, a
+    very positive score for a low-minutes player often reflects limited
+    history being pulled toward the mean rather than a real signal &mdash;
+    check FGA/game before reading too much into it. Usage rate is held at
+    its most recent observed value for all four models.
   </div>
   <div class="controls">
     <input id="search" type="text" placeholder="Filter by player or team&hellip;">
@@ -227,6 +293,7 @@ def build_dashboard_html(df: pd.DataFrame) -> str:
       <span id="fga-value">{fga_min:.1f}</span>
     </div>
   </div>
+  <div class="table-scroll">
   <table id="proj-table">
     <thead>
       <tr>
@@ -235,15 +302,17 @@ def build_dashboard_html(df: pd.DataFrame) -> str:
         <th data-key="team" data-type="str">Team</th>
         <th data-key="age" data-type="num">Age</th>
         <th data-key="fga" data-type="num">FGA/G</th>
-        <th class="unsortable">Range</th>
-        <th data-key="value" data-type="num">Projected TS%</th>
+        {stat_headers}
+        <th class="unsortable">Trend</th>
+        <th data-key="value" data-type="num">Breakout</th>
       </tr>
     </thead>
     <tbody>{"".join(rows_html)}
     </tbody>
   </table>
+  </div>
   <div id="empty">No players match that search.</div>
-  <p class="footnote">Generated from the Bayesian AR(3) hierarchical model in project.ipynb.</p>
+  <p class="footnote">Generated from the flexible-lag Bayesian AR(3) models in stat_models.py / build_projections.py.</p>
 </div>
 <script>
   const search = document.getElementById('search');
@@ -287,8 +356,11 @@ def build_dashboard_html(df: pd.DataFrame) -> str:
       sortState.key = key;
       const type = th.dataset.type;
       const sorted = rows.slice().sort((a, b) => {{
-        const av = a.children[colIdx].textContent.trim();
-        const bv = b.children[colIdx].textContent.trim();
+        const acell = a.children[colIdx];
+        const bcell = b.children[colIdx];
+        const attr = 'data-' + key;
+        const av = acell.hasAttribute(attr) ? acell.getAttribute(attr) : acell.textContent.trim();
+        const bv = bcell.hasAttribute(attr) ? bcell.getAttribute(attr) : bcell.textContent.trim();
         const an = type === 'num' ? parseFloat(av) : av.toLowerCase();
         const bn = type === 'num' ? parseFloat(bv) : bv.toLowerCase();
         if (an < bn) return -1 * sortState.dir;
@@ -309,12 +381,12 @@ def build_dashboard(
     html_path: str = DEFAULT_HTML,
     box_score_csv: str = DEFAULT_BOX_SCORE_CSV,
 ) -> Path:
-    """Read the projections CSV, merge in each player's latest FGA/game, render
-    the dashboard, and write it to disk."""
+    """Read the combined projections CSV, merge in each player's latest
+    FGA/game, render the breakout dashboard, and write it to disk."""
     df = (
         pd.read_csv(csv_path)
         .merge(latest_fga_per_game(box_score_csv), on="PLAYER_ID", how="left")
-        .sort_values("PROJECTED_TS_PCT", ascending=False)
+        .sort_values("BREAKOUT_SCORE", ascending=False)
         .reset_index(drop=True)
     )
     df["FGA_PER_GAME"] = df["FGA_PER_GAME"].fillna(0.0)
@@ -325,8 +397,8 @@ def build_dashboard(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Build (and open) the next-season TS% dashboard.")
-    parser.add_argument("--csv", default=DEFAULT_CSV, help="Projections CSV (default: %(default)s)")
+    parser = argparse.ArgumentParser(description="Build (and open) the next-season breakout dashboard.")
+    parser.add_argument("--csv", default=DEFAULT_CSV, help="Combined projections CSV (default: %(default)s)")
     parser.add_argument("--output", default=DEFAULT_HTML, help="Output HTML path (default: %(default)s)")
     parser.add_argument(
         "--box-scores", default=DEFAULT_BOX_SCORE_CSV, help="Box-score CSV for FGA/game (default: %(default)s)"
