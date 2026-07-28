@@ -146,7 +146,29 @@ For each stat, `DELTA_<stat> = PROJECTED − CURRENT` (sign-flipped for `DEF_RAT
 
 On the real 2021–26 data (`SEASON_MIN_EST >= 500`): 1,856 player-seasons, 639 players, 379 of whom are active in the most recent season and get a next-season projection on all four stats. Each pooled model samples in ~10–12 seconds (`draws=1000, tune=1000, chains=4, target_accept=0.9`) — the full four-stat pipeline runs in under two minutes.
 
-## 7. Dashboard
+## 7. Cross-validation
+
+`cross_validate.py` checks all four pooled models two ways:
+
+- **PSIS-LOO-CV** (`az.loo`) on the full-data fit — the same method used to compare the pooled and hierarchical TS% models in Section 4.1, now computed for all four stats (`fit_ar_stat_model` calls `pm.compute_log_likelihood` right after sampling so the log-likelihood group is available). Cheap, since it reuses the already-drawn posterior via importance sampling rather than refitting per held-out point — but that approximation is only as good as its Pareto-k diagnostic says it is.
+- **5-fold holdout validation** — an actual refit-and-predict check: split the shared player-season universe into 5 random folds (row-level; safe here because the AR lag features are realized historical values already sitting in the data, not model outputs, so there's no leakage risk from a different row for the same player landing in a different fold), refit on the other 4/5 each time, and score the held-out predictions. This doesn't depend on PSIS-LOO's importance-sampling approximation at all, so it's the more trustworthy number when the two disagree.
+
+**Real-data result:**
+
+| stat | elpd_loo (se) | p_loo | max Pareto k | LOO reliable? | 5-fold RMSE | 5-fold MAE | 5-fold R² |
+|---|---|---|---|---|---|---|---|
+| TS_PCT | 3113.4 (39.3) | 9.0 | 0.20 | yes | 0.0452 | 0.0344 | 0.237 |
+| AST_PCT | 2786.9 (45.5) | 10.0 | 0.20 | yes | 0.0540 | 0.0401 | 0.592 |
+| REB_PCT | 4171.1 (53.4) | 9.5 | 0.29 | yes | 0.0255 | 0.0175 | 0.577 |
+| DEF_RATING | -5096.4 (30.7) | 8.9 | 0.27 | yes | 3.7695 | 2.9942 | 0.115 |
+
+All four have max Pareto k well under the 0.7 warning threshold (unsurprising for a pooled, non-hierarchical model — see Section 4.1 for why the *hierarchical* TS% model's LOO isn't trustworthy in the same way), so PSIS-LOO is trusted here rather than just reported.
+
+The 5-fold R² split is the more interesting result: `AST_PCT` (0.592) and `REB_PCT` (0.577) hold up well out-of-sample, while `TS_PCT` (0.237) and `DEF_RATING` (0.115) explain much less next-season variance from age + usage + AR lags alone. That's consistent with what each stat actually is — assist rate and rebound rate are largely a function of role and physical/positional traits that don't change much season to season, whereas TS% is sensitive to shot luck and shot selection, and `DEF_RATING` is sensitive to teammates, scheme, and opponent quality, none of which this model observes. Practically: `BREAKOUT_SCORE` on the dashboard should be read with more confidence for a player's assist/rebound-rate component than for the TS%/defense components, since the latter two are inherently noisier targets for this feature set, not because those two model fits are wrong.
+
+`elpd_loo` isn't directly comparable across stats (it's a function of each stat's own likelihood scale — `DEF_RATING`'s large-magnitude negative value reflects its ~9-point residual sd, not a worse fit than the percentage stats), so use it to compare models on the *same* stat (e.g. against a future model revision) rather than to rank the four stats against each other; the 5-fold R² table above is the cross-stat comparison.
+
+## 8. Dashboard
 
 `bayesian_ar_output/next_season_projections_all.csv` (`PLAYER_ID`, `PLAYER_NAME`, `TEAM`, `PROJECTED_AGE`, then `CURRENT_<stat>`/`PROJECTED_<stat>`/`<stat>_HDI_LOW`/`<stat>_HDI_HIGH`/`DELTA_<stat>`/`Z_<stat>` for each of the four stats, plus `BREAKOUT_SCORE`) is the interchange format between `build_projections.py` and the dashboard. `dashboard.py` is a standalone module — it only depends on `pandas`, not `pymc`/`arviz` — so viewing or rebuilding the dashboard doesn't require re-running any model:
 
@@ -158,13 +180,14 @@ python dashboard.py --csv path/to/other.csv --output path/to/other.html
 
 The HTML is a single self-contained file (inline CSS/JS, no external requests), sorted by `BREAKOUT_SCORE` descending by default — who's projected to improve the most across shooting, playmaking, rebounding, and defense together. Every column header is clickable to re-sort by a specific stat instead (sorting is stable, so re-sorting by Team groups players together while preserving their relative order within each team). The search box filters by player name or team substring; the FGA/game slider is there to separate a real small-sample-size breakout candidate from one that's mostly regression-to-the-mean noise on very little playing time.
 
-## 8. Reproducing this
+## 9. Reproducing this
 
 ```
 pip install -r requirements.txt   # or use .devcontainer
 jupyter nbconvert --to notebook --execute --inplace project.ipynb
 python build_projections.py       # if you only need to refresh the 4-stat CSV, not the full notebook
 python dashboard.py
+python cross_validate.py          # optional: re-run LOO-CV + 5-fold validation, ~7-8 minutes
 ```
 
-Sampling the TS% models takes roughly 20 seconds (pooled) + 3 minutes (hierarchical) on a single machine with 4 chains; each of the four `build_projections.py` models adds another ~10–12 seconds, and the projection loops only evaluate already-drawn posterior samples, not new MCMC, so they add negligible time.
+Sampling the TS% models takes roughly 20 seconds (pooled) + 3 minutes (hierarchical) on a single machine with 4 chains; each of the four `build_projections.py` models adds another ~10–12 seconds, and the projection loops only evaluate already-drawn posterior samples, not new MCMC, so they add negligible time. `cross_validate.py` is the slow one — it refits each of the four models 6 times (1 full fit + 5 folds), so budget ~7-8 minutes total.

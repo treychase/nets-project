@@ -167,7 +167,12 @@
     very positive score for a low-minutes player often reflects limited
     history being pulled toward the mean rather than a real signal &mdash;
     check FGA/game before reading too much into it. Usage rate is held at
-    its most recent observed value for all four models.
+    its most recent observed value for all four models. Cross-validated
+    out-of-sample R&sup2; (see <code>docs/TECHNICAL.md</code>) is much
+    higher for AST% and REB% (~0.58&ndash;0.59) than for TS% and DEF RTG
+    (~0.12&ndash;0.24) &mdash; weight the playmaking/rebounding components
+    of a player's breakout score more than the shooting/defense components,
+    which are inherently noisier for this feature set.
   </div>
   <div class="controls">
     <input id="search" type="text" placeholder="Filter by player or team&hellip;">
