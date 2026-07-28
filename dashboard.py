@@ -47,15 +47,17 @@ def _fmt_stat_value(value: float, unit: str, decimals: int) -> str:
 def _stat_cell_html(row: pd.Series, target_col: str, unit: str, decimals: int) -> str:
     current = row[f"CURRENT_{target_col}"]
     projected = row[f"PROJECTED_{target_col}"]
+    # DELTA_* is already direction-adjusted (positive always = better, flipped for
+    # DEF_RATING since a lower rating is the improvement) -- shown as-is so the
+    # badge's sign always agrees with its color, even though for DEF_RATING that
+    # means it isn't simply projected-current.
     delta = row[f"DELTA_{target_col}"]
-    is_improvement = delta > 0  # DELTA_* is already direction-adjusted (positive = better)
-    delta_class = "pos" if is_improvement else ("neg" if delta < 0 else "flat")
-    raw_delta = projected - current  # shown in the stat's own units, not the direction-adjusted one
-    sign = "+" if raw_delta >= 0 else ""
+    delta_class = "pos" if delta > 0 else ("neg" if delta < 0 else "flat")
+    sign = "+" if delta >= 0 else ""
     if unit == "%":
-        delta_str = f"{sign}{raw_delta * 100:.{decimals}f}"
+        delta_str = f"{sign}{delta * 100:.{decimals}f}"
     else:
-        delta_str = f"{sign}{raw_delta:.{decimals}f}"
+        delta_str = f"{sign}{delta:.{decimals}f}"
     return (
         f'<span class="stat-cur">{_fmt_stat_value(current, unit, decimals)}</span>'
         f'<span class="stat-arrow">&rarr;</span>'
@@ -272,7 +274,11 @@ def build_dashboard_html(df: pd.DataFrame) -> str:
     change (current &rarr; projected next season, flipped for defensive
     rating since a lower number is better there) and averages the four,
     so players are ranked by expected across-the-board improvement rather
-    than by a single stat. Players already near the top of a stat have less
+    than by a single stat. The colored delta next to each stat uses that
+    same "positive always means better" convention, so DEF RTG's badge is
+    the reverse of what the raw numbers subtract to &mdash; e.g. 118.8
+    &rarr; 115.5 shows <strong>+3.3</strong> in green because the rating
+    dropped (improved) by 3.3. Players already near the top of a stat have less
     room to climb and the model reverts them toward the population mean, so
     established stars often show a negative score here &mdash; this ranks
     who's expected to <em>improve</em>, not who will be best. Similarly, a
