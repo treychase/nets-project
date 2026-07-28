@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Who's Set Up to Shoot the Best Next Season</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --surface: #f7f8fa;
+    --ink: #16181d;
+    --ink-secondary: #55606e;
+    --ink-muted: #8a94a3;
+    --border: #e3e7ec;
+    --accent: #2f6fed;
+    --accent-range: rgba(47, 111, 237, 0.22);
+    --track: #e9edf2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a;
+      --surface: #1c1f25;
+      --ink: #eef1f5;
+      --ink-secondary: #aab3c0;
+      --ink-muted: #77808f;
+      --border: #2b2f37;
+      --accent: #6b9bff;
+      --accent-range: rgba(107, 155, 255, 0.28);
+      --track: #262a31;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    padding: 48px 20px 80px;
+    line-height: 1.65;
+  }
+  .wrap { max-width: 700px; margin: 0 auto; }
+  h1 { font-size: 1.9rem; line-height: 1.25; margin: 0 0 6px; }
+  .byline { color: var(--ink-muted); font-size: 0.9rem; margin: 0 0 36px; }
+  h2 { font-size: 1.25rem; margin: 44px 0 14px; }
+  p { margin: 0 0 18px; font-size: 1.02rem; }
+  .lede { font-size: 1.12rem; color: var(--ink-secondary); }
+  a { color: var(--accent); }
+  .callout {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin: 24px 0;
+    font-size: 0.95rem;
+    color: var(--ink-secondary);
+  }
+  .chart {
+    margin: 24px 0 8px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 20px 8px;
+    background: var(--surface);
+  }
+  .chart-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 2px; }
+  .chart-subtitle { color: var(--ink-muted); font-size: 0.8rem; margin-bottom: 18px; }
+  .bar-row {
+    display: grid;
+    grid-template-columns: 120px 1fr 70px;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 11px;
+    font-size: 0.85rem;
+  }
+  .bar-row .player { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bar-row .team { color: var(--ink-muted); font-size: 0.75rem; }
+  .bar-track { position: relative; height: 16px; border-radius: 4px; background: var(--track); overflow: hidden; }
+  .bar-range { position: absolute; top: 0; bottom: 0; background: var(--accent-range); }
+  .bar-fill { position: absolute; top: 0; bottom: 0; left: 0; background: var(--accent); border-radius: 4px; }
+  .bar-row .pct { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-secondary); }
+  .chart-footnote { color: var(--ink-muted); font-size: 0.78rem; margin: 12px 0 4px; }
+  ul { padding-left: 22px; margin: 0 0 18px; }
+  li { margin-bottom: 8px; }
+  .footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--border); color: var(--ink-muted); font-size: 0.82rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Who's Set Up to Shoot the Best Next Season</h1>
+<p class="byline">A look at what five years of NBA shooting data says about who's next</p>
+
+<p class="lede">Every player has a track record. Some are long and steady, some are short and shaky, and a few barely exist yet. The question here is simple: given what a player has actually done, how efficient should we expect them to be next season?</p>
+
+<p>We built a model on five seasons of real NBA box scores (2021-22 through 2025-26) that does exactly that, for true shooting percentage — the version of shooting percentage that actually counts for something, since it folds in three-pointers and free throws instead of just counting makes and misses at the rim.</p>
+
+<h2>What the model actually looks at</h2>
+
+<p>Three things, in roughly this order of importance: a player's own recent shooting efficiency, their age, and how big a role they played on offense. The model doesn't just average the last three seasons — it lets the data decide how much weight last season deserves versus two or three years back, and it does the same for age, since efficiency tends to climb through a player's twenties before it eventually declines.</p>
+
+<p>The part that changed most from earlier versions of this project: it used to require three full consecutive seasons of history before it would touch a player at all, which meant anyone in their first couple of years, or coming off an injury gap, got skipped entirely. That's fixed now. A guy with one season on record gets a projection built from that one season, his age, and his role — a guy with three gets the full picture. Less history just means a wider, more honest range around the guess.</p>
+
+<div class="callout">
+It also isn't a guess dressed up as a fact. Every projection comes with a range, not just a single number — because "we're pretty sure" and "we have no idea" both deserve to look different on the page.
+</div>
+
+<h2>The top of the list</h2>
+
+<p>Sorted by projected true shooting percentage for next season, here are the fifteen players the model is highest on:</p>
+
+<div class="chart">
+  <div class="chart-title">Highest projected true shooting %, next season</div>
+  <div class="chart-subtitle">Bar length = projected mean &middot; light band = range of reasonable outcomes</div>
+  <div id="bars"></div>
+  <div class="chart-footnote">Source: real 2021&ndash;26 box score data. Full sortable, searchable version in <code>bayesian_ar_output/dashboard.html</code>.</div>
+</div>
+
+<h2>Why it's mostly centers</h2>
+
+<p>If you don't follow basketball closely, this list might look strange — where's the league's leading scorer? Where are the guys who win MVP votes? The answer is that true shooting percentage rewards a very specific kind of efficiency, and the players who post the highest numbers are almost always low-usage bigs who mostly dunk, catch lobs, and clean up putbacks at the rim. They take fewer shots than a star wing or point guard, but the shots they do take go in at an extremely high rate. Nikola Jokić shows up here too, which is the exception that proves the rule — he's both a superstar and one of the most efficient scorers alive, at any usage level.</p>
+
+<p>None of this is a flaw in the model. It's just what the stat measures. A star who creates his own shot off the dribble against a set defense is doing something much harder than a center scoring off a well-timed lob, and true shooting percentage doesn't try to tell them apart — it only counts how often the shots go in, relative to how many points each one was worth.</p>
+
+<h2>What this doesn't know</h2>
+
+<p>The model assumes a player's role next season looks like his role last season. If a team is about to hand someone the ball twenty more times a game — or bench him in favor of a rookie — the projection won't see that coming, because nothing in the data yet reflects it. It's a reasonable starting assumption, not a roster prediction.</p>
+
+<p>It also can't project a player with zero NBA track record. A complete rookie who hasn't played a qualifying season yet just isn't in this list — there's nothing to build a projection from until he's actually stepped on an NBA court.</p>
+
+<h2>Where to look further</h2>
+
+<p>The full list — every player who qualified, not just the top fifteen — lives in an interactive page you can sort by team, by age, or by projected percentage, and search by name. That's the place to check where your own team's roster lands, not just the leaguewide leaderboard above.</p>
+
+<div class="footer">
+Built from Bayesian statistical models fit to real NBA data, not a fixed formula — every number above comes with real uncertainty attached, which is exactly what the ranges represent. See <code>docs/TECHNICAL.md</code> for the full modeling detail: priors, diagnostics, and what didn't work as cleanly as we'd like.
+</div>
+
+</div>
+<script>
+  const players = [{"name": "Jericho Sims", "team": "MIL", "pct": 70.9, "low": 67.8, "high": 73.9}, {"name": "Daniel Gafford", "team": "DAL", "pct": 69.9, "low": 66.8, "high": 73.0}, {"name": "Robert Williams III", "team": "POR", "pct": 69.4, "low": 65.9, "high": 72.7}, {"name": "Ryan Kalkbrenner", "team": "CHA", "pct": 69.3, "low": 63.6, "high": 75.0}, {"name": "Dwight Powell", "team": "DAL", "pct": 68.6, "low": 65.5, "high": 71.7}, {"name": "Jaxson Hayes", "team": "LAL", "pct": 68.1, "low": 65.0, "high": 71.4}, {"name": "Luke Kornet", "team": "SAS", "pct": 68.0, "low": 64.5, "high": 71.4}, {"name": "Jarrett Allen", "team": "CLE", "pct": 66.4, "low": 63.6, "high": 69.6}, {"name": "Mark Williams", "team": "PHX", "pct": 66.1, "low": 62.7, "high": 69.5}, {"name": "Jalen Duren", "team": "DET", "pct": 66.0, "low": 62.7, "high": 69.5}, {"name": "Onyeka Okongwu", "team": "ATL", "pct": 66.0, "low": 62.9, "high": 69.0}, {"name": "Rudy Gobert", "team": "MIN", "pct": 65.9, "low": 62.9, "high": 69.1}, {"name": "Nick Richards", "team": "CHI", "pct": 65.2, "low": 62.0, "high": 68.3}, {"name": "Nikola Joki\u0107", "team": "DEN", "pct": 65.2, "low": 62.4, "high": 68.4}, {"name": "Neemias Queta", "team": "BOS", "pct": 65.1, "low": 61.4, "high": 69.1}];
+  const container = document.getElementById('bars');
+  const domMin = Math.min(...players.map(p => p.low)) - 2;
+  const domMax = Math.max(...players.map(p => p.high)) + 2;
+  const domSpan = domMax - domMin;
+  players.forEach(p => {
+    const row = document.createElement('div');
+    row.className = 'bar-row';
+    const fillPct = (p.pct - domMin) / domSpan * 100;
+    const rangeLeft = (p.low - domMin) / domSpan * 100;
+    const rangeWidth = (p.high - p.low) / domSpan * 100;
+    row.innerHTML = `
+      <div class="player">${p.name}<div class="team">${p.team}</div></div>
+      <div class="bar-track">
+        <div class="bar-range" style="left:${rangeLeft.toFixed(1)}%;width:${rangeWidth.toFixed(1)}%"></div>
+        <div class="bar-fill" style="width:${fillPct.toFixed(1)}%"></div>
+      </div>
+      <div class="pct">${p.pct.toFixed(1)}%</div>
+    `;
+    container.appendChild(row);
+  });
+</script>
+</body>
+</html>
